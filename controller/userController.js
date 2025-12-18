@@ -5,6 +5,8 @@ const jwt = require("jsonwebtoken");
 const ApiError = require("../utils/ApiError");
 const ApiResponse = require("../utils/ApiResponse");
 
+
+
 const registerUser = async (req, res) => {
   const { userName, email, password } = req.body;
 
@@ -263,10 +265,12 @@ const updateUserAvatar = async (req, res) => {
   if (!avatarLocalPath) {
     throw new ApiError(404, "avatar image file is required");
   }
+
+  
   const { avatarUrl } = await uploadToCloud(avatarLocalPath);
 
-  if(!avatarUrl){
-    throw new ApiError(404,"error while uploading avatar")
+  if (!avatarUrl) {
+    throw new ApiError(404, "error while uploading avatar");
   }
   const user = await userModel.findByIdAndUpdate(
     req?.user._id,
@@ -278,32 +282,153 @@ const updateUserAvatar = async (req, res) => {
     { new: true }
   );
 
-  return res.status(200).json(new ApiResponse(200,user,"avatar image updated successfully"))
+  return res
+    .status(200)
+    .json(new ApiResponse(200, user, "avatar image updated successfully"));
 };
 
-const updateCoverImage=async(req,res)=>{
+const updateCoverImage = async (req, res) => {
+  const coverImagelocalPath = req?.file.path;
 
-    const coverImagelocalPath=req?.file.path;
+  if (!coverImagelocalPath) {
+    throw new ApiError(404, "coverimage file is missing");
+  }
 
-    if(!coverImagelocalPath){
-        throw new ApiError(404,"coverimage file is missing")
-    }
+  const { coverImageUrl } = await uploadToCloud(coverImagelocalPath);
 
-    const {coverImageUrl}=await uploadToCloud(coverImagelocalPath);
+  if (!coverImageUrl) {
+    throw new ApiError(404, "error while uploading cover image");
+  }
 
-    if(!coverImageUrl){
-        throw new ApiError(404,"error while uploading cover image")
-    }
+  const user = userModel.findByIdAndUpdate(
+    req?.user?._id,
+    {
+      $set: {
+        coverImage: coverImageUrl,
+      },
+    },
+    { new: true }
+  );
 
-    const user=userModel.findByIdAndUpdate(req?.user?._id,{
-        $set:{
-            coverImage:coverImageUrl
+  return res
+    .status(200)
+    .json(new ApiResponse(200, user, "user coverimage updated successfully "));
+};
+
+const getUserChanelProfile=async(req,res)=>{
+
+      const userName=req.params;
+      if(!userName){
+        throw new ApiError(400,"username is missing");
+      }
+
+      const channel=await userModel.aggregate([
+        {
+          $match:{
+            userName:userName     //return one matched document
+          }
+        },{
+          $lookup:{  // user model and subscription model are joined based on id and channel field 
+                            //and return new subscribers document
+                                      
+            from:"subscriptions",
+            localField:"_id",
+            foreignField:"channel",
+            as:"subscribers"
+          }
+        },{
+            $lookup:{     //retrun subscribedTo document
+              from:"subscriptions",
+              localField:"_id",
+              foreignField:"subscriber",
+              as:"subscribedTo"
+            }
+        },{
+          $addFields:{        //add new field 
+            subscribersCount:{ 
+              $size:"$subscribers"  //count from field subscribers
+            },
+            channelSubscribedCount:{    //count from field subscribedTo
+              $size:"$subscribedTo"
+            },
+            isSubscribed:{          
+              $cond:{
+                if:{$in:[req.user?._id,"$subscribers.subscriber"]},  //check whether the  user is available in the subscribers document or not
+                then:true,
+                else:false
+              }
+            }
+            
+          }
+        },
+        {
+          $project:{          //provied only prjected field   
+            userName:1,
+            subscribersCount:1,
+            channelSubscribedCount:1,
+            isSubscribed:1,
+            avatar:1,
+            coverImage:1,
+            email:1
+          }
         }
-    },{new:true})
+        
+      ])
+      console.log(channel);
 
-    return res.status(200).json(new ApiResponse(200,user,"user coverimage updated successfully "))
+      if(!channel?.length){
+        throw new ApiError(404,"channel doesnot exist")
+      }
+
+      return res.status(200)
+      .json(new ApiResponse(200,channel[0],"user channel fetched successfully"))
+      
+
 }
+const getWatchedHistory=async(req,res)=>{
+        const user=await userModel.aggregate([
+          {
+            $match:{
+                _id:new mongoose.Types.ObjectId(req.user._id)
+            }
+        },{
+          $lookup:{
+              from:"videos",
+              localField:"watchHistory",
+              foreignField:"_id",
+              as:"watchHistory",
+              pipeline:[
+                {
+                  $lookup:{
+                    from:"users",
+                    localField:"owner",
+                    foreignField:"_id",
+                    as:"owner",
+                    pipeline:[
+                      {
+                        $project:{
+                          userName:1,
+                          avatar:1
+                        }
+                      },{
+                        $addFields:{
+                          owner:{
+                            $first:"$owner"     //return owner array first element or object 
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+          }
+        }
+      
+      ])
 
+      return res.status(200).
+      json(new ApiResponse(200,user[0].watchHistory,"Watched history fetched successfully"))
+}
 module.exports = {
   registerUser,
   login,
@@ -313,5 +438,7 @@ module.exports = {
   updateAccountDetails,
   getCurrentUser,
   updateUserAvatar,
-  updateCoverImage
+  updateCoverImage,
+  getUserChanelProfile,
+  getWatchedHistory
 };
